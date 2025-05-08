@@ -1,24 +1,14 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import requests
+from io import BytesIO
+from openpyxl import load_workbook
 from functions import friction_factor, pressure_loss, reynolds
 
 st.title('Calculadora de caída de presión')
 
-# Leer archivos desde GitHub
-@st.cache_data
-def cargar_excel_desde_github(url):
-    return pd.read_excel(url, sheet_name=None, header=None)
-
-# URLs de los archivos en GitHub
-url_diametros = 'https://github.com/Hescamilla2025/Pressure_drop_calculator/main/primero.xlsx'
-url_rugosidades = 'https://github.com/Hescamilla2025/Pressure_drop_calculator/main/segundo.xlsx'
-
-# Cargar datos
-excel_diametros = cargar_excel_desde_github(url_diametros)
-excel_rugosidades = cargar_excel_desde_github(url_rugosidades)
-
-# Inicializar la tabla
+# Inicializar la tabla en session_state si no existe
 if 'tabla' not in st.session_state:
     columnas = {
         'Flujo\n[m³/s]': [],
@@ -30,31 +20,47 @@ if 'tabla' not in st.session_state:
     }
     st.session_state.tabla = pd.DataFrame(columnas)
 
-# Selección de tubería
-st.subheader("Parámetros de tubería desde archivo Excel")
-material = st.selectbox("Material de la tubería:", list(excel_diametros.keys()))
-df_raw = excel_diametros[material]
+# Leer archivo Excel desde GitHub con requests y openpyxl
+@st.cache_data
+def cargar_excel_desde_github(url):
+    response = requests.get(url)
+    file = BytesIO(response.content)
+    wb = load_workbook(file, data_only=True)
+    return wb
 
-# Reconstruir DataFrame con fila 1 como columnas y columna A como índice
-df_material = df_raw.iloc[1:, 1:]
-df_material.columns = df_raw.iloc[0, 1:]
-df_material.index = df_raw.iloc[1:, 0]
-df_material.index.name = 'Diámetro nominal'
+# URLs de los archivos en GitHub
+url_diametros = 'https://raw.githubusercontent.com/Hescamilla2025/Pressure_drop_calculator/main/primero.xlsx'
+url_rugosidades = 'https://raw.githubusercontent.com/Hescamilla2025/Pressure_drop_calculator/main/segundo.xlsx'
+
+# Cargar datos desde Excel
+wb_diametros = cargar_excel_desde_github(url_diametros)
+wb_rugosidades = cargar_excel_desde_github(url_rugosidades)
+
+# Selección de material
+st.subheader("Parámetros de tubería desde archivo Excel")
+material = st.selectbox("Material de la tubería:", wb_diametros.sheetnames)  # Cambié keys() por sheetnames
+ws_diametros = wb_diametros[material]
+
+# Reconstruir DataFrame con la estructura de filas y columnas
+df_material = pd.DataFrame(ws_diametros.values)
+df_material.columns = df_material.iloc[0]
+df_material = df_material.drop(0)
+df_material.set_index(df_material.columns[0], inplace=True)  # Columna A como índice
 
 cedula = st.selectbox("Cédula:", df_material.columns.tolist())
 diametro_nominal = st.selectbox("Diámetro nominal:", df_material.index.tolist())
 
+# Obtener diámetro
 diametro = df_material.loc[diametro_nominal, cedula]  # en mm
 st.write(f"📏 Diámetro interno: {diametro:.2f} mm")
 
 # Rugosidad
 usar_rugosidad_recomendada = st.checkbox("Usar rugosidad recomendada")
 if usar_rugosidad_recomendada:
-    df_rug_raw = list(excel_rugosidades.values())[0]  # Suponemos solo una hoja
-    df_rug = df_rug_raw.iloc[1:, :2]
+    ws_rugosidad = wb_rugosidades.active
+    df_rug = pd.DataFrame(ws_rugosidad.values)
     df_rug.columns = ['Material', 'Rugosidad']
     df_rug.set_index('Material', inplace=True)
-
     rugosidad = df_rug.loc[material, 'Rugosidad']  # en mm
     st.write(f"🪵 Rugosidad recomendada: {rugosidad:.3f} mm")
 else:
